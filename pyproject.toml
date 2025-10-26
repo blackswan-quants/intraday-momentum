@@ -1,0 +1,7 @@
+[project]
+name = "intraday-momentum"
+version = "0.1.0"
+description = "Reproducible implementation and extension of an intraday momentum strategy on SPY + QuantConnect-ready research framework."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
