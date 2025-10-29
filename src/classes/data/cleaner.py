@@ -1,37 +1,94 @@
 from src.classes.utils import io as picklefunction
-import pandas_market_calendar as mcal
 import pandas as pd
 from statsmodels.tsa.seasonal import seasonal_decompose
+from datetime import datetime
+import matplotlib.pyplot as plt
 
+
+    
 class DataCleaner:
-    def __init__(self,df):
-        self.df = df
-        self.df_deseason = pd.DataFrame()
+    def __init__(self,csv_raw):
+        try:
+            self.df = pd.read_csv(csv_raw)
+        except(FileNotFoundError):
+            raise FileNotFoundError(f"Error: The file path '{csv_raw}' was not found.")
+        except Exception as e:
+            raise Exception(f"An error occurred while reading the CSV file: {e}")
+        if self.df.empty:
+            raise ValueError("Error: The DataFrame is empty after reading the CSV file.")
+        
+        if 'caldt' not in self.df.columns or 'close' not in self.df.columns:
+            print('Warning, time and close columns not found in the dataframe or might have a different name, subsequent methods could fail')
         return
-
-
-    def clean(self, exchange, start_date, end_date, seasonality=False):
-        # capisci come ti arrivano i dati e se devi collegare i giorni
-        market_calendar = mcal.get_calendar(exchange)
-        trading_days = market_calendar.schedule(start_date=start_date, end_date=end_date)
-        # completa successivamente 
-        self.df = self.df.set_index('t')
-        return
+    
 
     def compute_missing_ratio(self):
+
         missing_ratio_series = self.df.isnull().mean()
     
         return missing_ratio_series
 
-    
-    def deseasonalize(self, window_days=180, plot=False):
 
-        if not isinstance(self.df.index , pd.DatetimeIndex):
-            raise TypeError('Dataframe must have a datetime index')
+
+    def clean(self):
+        if 'caldt' not in self.df.columns:
+            raise ValueError(f'Time column "caldt" might be missing or have a different name')
         
-        price_series=self.df['close']
+        self.df['Datetime'] =pd.to_datetime(self.df['caldt'], errors='coerce')
 
-        period_deseason = window_days*390 
+        nat_count = self.df.Datetime.isna().sum()
+        if nat_count>0:
+            print(f"Warning: {nat_count} invalid date values in 'caldt' were coerced to NaT.")
+
+        self.df = self.df.set_index('Datetime')
+
+        print("Missing Ratios After Indexing:")
+        print(self.compute_missing_ratio())
+            
+        return
+    
+    def fill_nan(self,column='close'):
+        if column not in self.df.columns:
+            raise KeyError(f'Error: required column {column} not found in the Dataframe')
+        self.df[column] = self.df[column].fillna(method='ffill').fillna(method='bfill')
+
+
+    def plot(self,column='close'):
+        if column not in self.df.columns:
+            raise KeyError(f'Error: required column {column} not found in the Dataframe')
+        
+        plt.hist(self.df[column],density=True, color='red', bins=50, edgecolor='black')
+        plt.title(f'Distribuzione di {column}')
+        plt.xlabel(column)
+        plt.ylabel('Densità di Probabilità')
+        plt.grid(axis='y', alpha=0.25) 
+
+        if column == 'close':
+
+
+
+
+        return 
+    def deseasonalize(self, period='m', window_days=180, plot=False):
+
+        period_multiplier={'w':1/7, 'd':1, 'h':6.5 , 'm':390}
+
+        if not isinstance(self.df.index, pd.DatetimeIndex):
+            raise TypeError('Dataframe must have a datetime index. Run the clean() method first.')
+        if 'close' not in self.df.columns:
+            raise KeyError("Error: Required column 'close' not found in the DataFrame.")
+        if period not in self.period_multiplier: 
+            raise ValueError(f"Invalid period '{period}'. Must be one of: {list(self.period_multiplier.keys())}")
+        if not isinstance(window_days, (int, float)) or window_days <= 0:
+            raise ValueError("window_days must be a positive number.")
+        
+        price_series=self.df['close'].copy()
+
+        if price_series.isnull().any():
+            price_series=price_series.fillna(method = 'ffill').fillna(method='bfill')
+
+
+        period_deseason = window_days*period_multiplier[period] 
         decomposition = seasonal_decompose(
             price_series,
             model='multiplicative',
@@ -46,9 +103,8 @@ class DataCleaner:
 
         price_deseason = trend*residual
         
-        df_deseason = self.df.copy()
-        df_deseason['close_deseasonalized'] = price_deseason 
-        self.df_deseason=df_deseason
+        self.df['close_deseasonalized'] = price_deseason 
+
         return 
     
     def save_cleaned(self,path):
@@ -56,4 +112,4 @@ class DataCleaner:
         return
 
 
-# TODO : check all the functions, understand how to deal with time data in input, create distirbution functions 
+# TODO : check all the functions, create distirbution functions and better plots
