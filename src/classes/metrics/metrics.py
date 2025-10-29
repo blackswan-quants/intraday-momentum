@@ -4,26 +4,28 @@ import numpy as np
 class MetricsCalculator :
 
     
-    def from_clean_df (self, df : pd.DataFrame) -> tuple[pd.DataFrame , pd.DataFrame] :
+    def from_clean_df (self, df : pd.DataFrame , save = True) -> tuple[pd.DataFrame , pd.DataFrame] :
         """
         Standart OHVLC df. 
         Goal here is to compute all the relevant features
-
         """
         #Initialisation of the two desired data sets
         df['day'] = pd.to_datetime(df['caldt']).dt.date
         df_all_days = df.copy()
 
         #Apply Helpers
-        self.compute_RV(df_all_days)
-        self.compute_BV(df_all_days)
-        self.compute_vwap(df_all_days)
+        self.compute_RV(df=df_all_days)
+        self.compute_BV(df=df_all_days)
+        self.compute_vwap(df=df_all_days)
 
         #Drop unecessary columns 
         df_all_days.drop(columns=["log_returns" , "price"], inplace= True)
 
         #daily_groups
-        df_daily_groups = self.compute_intraday_profiles(df_all_days)
+        df_daily_groups = self.compute_intraday_profiles(df=df_all_days)
+        
+        if save :
+            pd.to_pickle((df_all_days, df_daily_groups), "data/processed/df_and_metrics.pkl")
     
         return df_all_days , df_daily_groups
     
@@ -60,6 +62,5 @@ class MetricsCalculator :
         df["vwap"] = df["day"].map(vwap , na_action= "ignore")
     
     def compute_intraday_profiles (self , df : pd.DataFrame) -> pd.DataFrame :
-    
         out = df.groupby("minute_of_day").mean(numeric_only=True)
         return out
