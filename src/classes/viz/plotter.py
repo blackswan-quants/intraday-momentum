@@ -47,8 +47,18 @@ class Plotter:
       dataframe : pd.dataframe
           DataFrame containing data with unique dates as indexes, daily returns of the index and daily AUM of the strategy.
       """
+      #check if the index is of type pd.DatetimeIndex
+      if not isinstance(dataframe.index, pd.DatetimeIndex):
+        Plotter.logger.error("The index of the dataframe is not DatetimeIndex. Type: %s", type(dataframe.index).__name__)
+        raise ValueError("Index must be DatetimeIndex")
+
+      #check if there are any duplicates
+      if not dataframe.index.is_unique:
+        Plotter.logger.error("Dataframe index contains duplicate dates.")
+        raise ValueError("Datafram index must contain unique dates")
 
       self.dataframe = dataframe
+      Plotter.logger.info("Dataframe correctly initialized")
 
 
   def plot_cum_returns (
@@ -212,4 +222,5 @@ class Plotter:
       df_stats['Beta'] = round(model.params[ret_idx], 2)
 
       return df_stats
+
 
