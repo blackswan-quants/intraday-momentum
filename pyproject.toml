@@ -12,9 +12,12 @@ requires-python = ">=3.12"
 # === Core libraries ===
 dependencies = [
     "ipykernel>=7.0.1",
+    "logging>=0.4.9.6",
     "matplotlib>=3.10.7",
     "numpy>=2.3.4",
     "pandas>=2.3.3",
+    "path>=17.1.1",
+    "pathlib>=1.0.1",
     "scikit-learn>=1.7.2",
     "scipy>=1.16.2",
     "statsmodels>=0.14.5",
