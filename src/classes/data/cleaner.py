@@ -17,7 +17,7 @@ class DataCleaner:
     and provide methods for time-series analysis and visualization.
     
     The class assumes the raw data contains a time column named 'caldt' and a 
-    price column named 'close', though it issues warnings if they are missing.
+    price column named 'close', though it issues warnings if they are missing..
     """
 
 
