@@ -70,15 +70,42 @@ class DataCleaner:
         if 'caldt' not in self.df.columns:
             raise ValueError('Time column "caldt" might be missing or have a different name')
         
-        # Uso di 'errors='coerce' per trasformare date non valide in NaT
-        self.df['Datetime'] = pd.to_datetime(self.df['caldt'], errors='coerce')
+        # truncating the timezone info
+        self.df['caldt']=self.df['caldt'].astype(str)
+        try:
+            self.df['Datetime'] = pd.to_datetime(self.df['caldt'], errors='raise')
+            
+            # Verifica se Pandas ha fallito l'inferenza e ha lasciato object (raro, ma possibile)
+            if self.df['Datetime'].dtype == object:
+                raise ValueError("Pandas failed to infer datetime type automatically.")
+
+        except (Exception, ValueError): # Cattura l'errore se la conversione automatica fallisce
+            
+            # --- Tentativo 2: Fallback con Formato Specifico ---
+            logging.warning("Automatic datetime inference failed. Attempting fallback format: '%Y-%m-%d %H:%M:%S%z'")
+            
+            try:
+                specific_format = '%Y-%m-%d %H:%M:%S%z'
+                self.df['Datetime'] = pd.to_datetime(
+                    self.df['caldt'], 
+                    format=specific_format, 
+                    errors='coerce',
+                    utc=True
+                )
+                
+            except ValueError as e:
+                # Se anche il formato specifico fallisce, logga e prosegui con NaT
+                logging.error(f"Failed to parse dates even with explicit format {specific_format}: {e}")
+                self.df['Datetime'] = pd.to_datetime(self.df['caldt'], errors='coerce') # Fallback finale a NaT
 
         nat_count: int = self.df['Datetime'].isna().sum()
         if nat_count > 0:
             logger.warning(f"{nat_count} invalid date values in 'caldt' were coerced to NaT.")
 
+
         self.df = self.df.set_index('Datetime')
         self.df = self.df.drop(columns=['caldt'])
+
         
         logger.info("Missing Ratios After Indexing:")
         logger.info(self.compute_missing_ratio().to_string())
@@ -244,15 +271,12 @@ class DataCleaner:
             logger.info("NaN values in 'close' column filled before decomposition.")
 
 
-        period_deseason = window_days*period_multiplier[period] 
+        period_deseason = int(window_days*period_multiplier[period])
         decomposition = seasonal_decompose(
             price_series,
             model='multiplicative',
             period = period_deseason
         )
-        trend = decomposition.trend
-        
-        residual = decomposition.resid
 
         if plot==True:
             decomposition.plot()
@@ -266,7 +290,7 @@ class DataCleaner:
 
         return 
     
-    def save_cleaned(self,path: str) -> None:
+    def save_cleaned(self,filename: str) -> None:
         """
         Saves the current state of the cleaned DataFrame to a specified path 
         (e.g., using a pickle format for efficient storage).
@@ -275,13 +299,15 @@ class DataCleaner:
             path (str): The file path where the DataFrame should be saved.
         """
         try:
-            PickleHelper(self.df)
-            PickleHelper.pickle_dump(self.df, path)
-            logger.info(f"Dataframe succesfully saved to {path} using pickle format.")
+            # 1. Istanzia l'helper con il DataFrame
+            helper = PickleHelper(self.df)
+
+            # 2. Chiama il metodo, passando SOLO il nome del file
+            helper.pickle_dump(filename)
+            
+            # Il logging qui è ora gestito principalmente da PickleHelper
         except Exception as e:
-            logger.error(f"Error saving dataframe to {path} : {e}")
+            # L'errore è già stato loggato in PickleHelper, ma lo logghiamo anche qui per contesto
+            logger.error(f"Failed to save data: {e}") 
             raise
         
-
-
-# TODO : test and save dataframe  
