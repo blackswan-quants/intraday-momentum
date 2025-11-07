@@ -1,11 +1,14 @@
-from src.classes.utils import io as picklefunction
+from ..utils.io import PickleHelper
 import pandas as pd
 from statsmodels.tsa.seasonal import seasonal_decompose
 from datetime import datetime
 import matplotlib.pyplot as plt
 import numpy as np 
+import logging
+from typing import Optional, Dict, Any
 
-
+logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+logger = logging.getLogger(__name__)
     
 class DataCleaner:
     """
@@ -18,7 +21,7 @@ class DataCleaner:
     """
 
 
-    def __init__(self,csv_raw):
+    def __init__(self, csv_raw: str) -> None:
         """
         Initializes the DataCleaner by reading a CSV file into a pandas DataFrame.
         Handles file errors and checks for empty data or critical columns.
@@ -29,19 +32,22 @@ class DataCleaner:
 
         try:
             self.df = pd.read_csv(csv_raw)
-        except(FileNotFoundError):
-            raise FileNotFoundError(f"Error: The file path '{csv_raw}' was not found.")
+        except FileNotFoundError:
+            logger.error(f"Error: The file path '{csv_raw}' was not found.")
+            raise
         except Exception as e:
-            raise Exception(f"An error occurred while reading the CSV file: {e}")
+            logger.error(f"An error occurred while reading the CSV file: {e}")
+            raise
+        
         if self.df.empty:
+            logger.error("Error: The DataFrame is empty after reading the CSV file.")
             raise ValueError("Error: The DataFrame is empty after reading the CSV file.")
         
         if 'caldt' not in self.df.columns or 'close' not in self.df.columns:
-            print('Warning, time and close columns not found in the dataframe or might have a different name, subsequent methods could fail')
-        return
+            logger.warning('Time and close columns not found in the dataframe or might have a different name, subsequent methods could fail.')
     
 
-    def compute_missing_ratio(self):
+    def compute_missing_ratio(self) -> pd.Series:
         """
         Computes the ratio of missing (NaN) values for every column in the DataFrame.
 
@@ -55,32 +61,29 @@ class DataCleaner:
 
 
 
-    def clean(self):
-
+    def clean(self) -> None:
         """
         Cleans the DataFrame by converting the 'caldt' column to a datetime object,
         handling invalid dates, and setting it as the DataFrame's index.
         """
 
         if 'caldt' not in self.df.columns:
-            raise ValueError(f'Time column "caldt" might be missing or have a different name')
+            raise ValueError('Time column "caldt" might be missing or have a different name')
         
-        self.df['Datetime'] =pd.to_datetime(self.df['caldt'], errors='coerce')
+        # Uso di 'errors='coerce' per trasformare date non valide in NaT
+        self.df['Datetime'] = pd.to_datetime(self.df['caldt'], errors='coerce')
 
-        nat_count = self.df.Datetime.isna().sum()
-        if nat_count>0:
-            print(f"Warning: {nat_count} invalid date values in 'caldt' were coerced to NaT.")
+        nat_count: int = self.df['Datetime'].isna().sum()
+        if nat_count > 0:
+            logger.warning(f"{nat_count} invalid date values in 'caldt' were coerced to NaT.")
 
         self.df = self.df.set_index('Datetime')
         self.df = self.df.drop(columns=['caldt'])
-
-        print("Missing Ratios After Indexing:")
-        print(self.compute_missing_ratio())
-            
-        return
+        
+        logger.info("Missing Ratios After Indexing:")
+        logger.info(self.compute_missing_ratio().to_string())
     
-    def fill_nan(self,column='close'):
-
+    def fill_nan(self, column: str = 'close') -> None:
         """
         Fills missing values (NaN) in a specified column using a forward-fill (ffill) 
         followed by a backward-fill (bfill) strategy.
@@ -91,10 +94,12 @@ class DataCleaner:
 
         if column not in self.df.columns:
             raise KeyError(f'Error: required column {column} not found in the Dataframe')
-        self.df[column] = self.df[column].fillna(method='ffill').fillna(method='bfill')
+        
+        self.df[column] = self.df[column].ffill().bfill()
+        logger.info(f"NaN values in column '{column}' filled using ffill/bfill strategy.")
 
 
-    def plot(self):
+    def plot(self) -> None:
         """
         Generates a 3-panel plot for time-series analysis:
         1. Distribution of Intraday Log Returns.
@@ -200,12 +205,11 @@ class DataCleaner:
             
         except Exception as e:
             # Catch general errors that might occur during plotting (e.g., NaN issues, math errors)
-            print(f"An unexpected error occurred during plotting: {e}")
-        
+            logger.error(f"An unexpected error occurred during plotting: {e}")        
         return
     
 
-    def deseasonalize(self, period='m', window_days=30, plot=False):
+    def deseasonalize(self, period: str = 'm', window_days: float = 30.0, plot: bool = False) -> None:
         """
         Performs seasonal decomposition on the 'close' price series to extract 
         trend, seasonal, and residual components. The deseasonalized price (trend * residual)
@@ -237,6 +241,7 @@ class DataCleaner:
 
         if price_series.isnull().any():
             price_series=price_series.fillna(method = 'ffill').fillna(method='bfill')
+            logger.info("NaN values in 'close' column filled before decomposition.")
 
 
         period_deseason = window_days*period_multiplier[period] 
@@ -251,14 +256,17 @@ class DataCleaner:
 
         if plot==True:
             decomposition.plot()
-        print(trend, residual)
-        price_deseason = trend*residual
+            plt.show()
+
+        price_deseason = price_series / decomposition.seasonal  
+        price_deseason = price_deseason.ffill().bfill()
+        logger.info(f"Price deseasonalized using period={period_deseason} and NaNs filled.")
         
         self.df['close_deseasonalized'] = price_deseason 
 
         return 
     
-    def save_cleaned(self,path):
+    def save_cleaned(self,path: str) -> None:
         """
         Saves the current state of the cleaned DataFrame to a specified path 
         (e.g., using a pickle format for efficient storage).
@@ -266,9 +274,14 @@ class DataCleaner:
         Args:
             path (str): The file path where the DataFrame should be saved.
         """
+        try:
+            PickleHelper(self.df)
+            PickleHelper.pickle_dump(self.df, path)
+            logger.info(f"Dataframe succesfully saved to {path} using pickle format.")
+        except Exception as e:
+            logger.error(f"Error saving dataframe to {path} : {e}")
+            raise
+        
 
-        picklefunction(self.df, path)
-        return
 
-
-# TODO : implement pickle function , improve deseasonalizer method 
+# TODO : test and save dataframe  
