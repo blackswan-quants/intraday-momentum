@@ -273,7 +273,7 @@ class Analyzer:
         # -------------------- Execution (parallel or sequential) --------------------
         results = []
         if self.max_workers > 1:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            with concurrent.futures.ProcessPoolExecutor(max_workers=self.max_workers) as executor:
                 for i, (success, data, err) in enumerate(executor.map(run_combo, enumerate(combos))):
                     if success:
                         results.append(data)
