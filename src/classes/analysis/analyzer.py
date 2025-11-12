@@ -99,7 +99,7 @@ class Analyzer:
                 if len(aligned_df) > 0:
                     Y = aligned_df['ret']
                     X = sm.add_constant(aligned_df['ret_spy'])
-                    model = sm.OLS(Y, X).fit() # adds an intercept term for alpha.
+                    model = sm.OLS(Y, X).fit() # Adds an intercept term for alpha.
                     
                     # model.params['const'] is the daily intercept (in decimal daily returns)
                     alpha_daily = float(model.params.get('const', 0.0))
