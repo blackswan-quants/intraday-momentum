@@ -276,7 +276,7 @@ class Analyzer:
 
         # -------------------- Backtest function --------------------
         # Capture whether we're using the built-in placeholder before possibly defining it
-        if(backtest_fn is None): 
+        if backtest_fn is None: 
             is_default_backtest=True
         else:
             is_default_backtest=False
