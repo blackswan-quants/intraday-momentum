@@ -17,6 +17,33 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 # Trading calendar constant used for annualization
 TRADING_DAYS = 252
 
+
+# Module-level worker function for ProcessPoolExecutor compatibility
+def _run_backtest_combo(args: tuple) -> tuple:
+    """Worker function to run a single parameter combination.
+    
+    Must be at module level for ProcessPoolExecutor pickling.
+    """
+    idx, params_tuple, param_names, seed, backtest_fn, trading_days = args
+    params = dict(zip(param_names, params_tuple))
+    try:
+        local_seed = seed + idx
+        pnl = backtest_fn(local_seed=local_seed, **params)
+        
+        # Import Analyzer to call compute_perf_stats
+        # Note: This creates a temporary instance for stats computation
+        from src.classes.analysis.analyzer import Analyzer
+        analyzer_temp = Analyzer(trading_days=trading_days)
+        stats = analyzer_temp.compute_perf_stats(pnl)
+        
+        merged = {**params, **stats}
+        return (True, merged, None)
+    except (ValueError, RuntimeError) as e:
+        return (False, None, f"{type(e).__name__}: {e}")
+    except Exception as e:
+        return (False, None, f"Unexpected {type(e).__name__}: {e}")
+
+
 class Analyzer:
     """Analyzer for computing performance statistics and parameter sensitivity sweeps.
 
@@ -98,8 +125,8 @@ class Analyzer:
 
                 if len(aligned_df) > 0:
                     Y = aligned_df['ret']
-                    X = sm.add_constant(aligned_df['ret_spy'])
-                    model = sm.OLS(Y, X).fit() # Adds an intercept term for alpha.
+                    X = sm.add_constant(aligned_df['ret_spy']) 
+                    model = sm.OLS(Y, X).fit()  # Fit regression (intercept already added by sm.add_constant())
                     
                     # model.params['const'] is the daily intercept (in decimal daily returns)
                     alpha_daily = float(model.params.get('const', 0.0))
@@ -124,7 +151,7 @@ class Analyzer:
                     logging.warning("No overlapping observations for regression; skipping alpha/beta.")
 
         # Drawdown calculation using AUM when available, else synthetic curve
-        if 'AUM' in daily_pnl_df.columns:
+        if 'AUM' in daily_pnl_df.columns and len(daily_pnl_df) > 0:
             first_aum_raw = daily_pnl_df['AUM'].iloc[0]
             try:
                 first_aum = float(first_aum_raw)
@@ -144,7 +171,7 @@ class Analyzer:
 
         rolling_max = cumulative_return.expanding().max()
         drawdowns = (cumulative_return - rolling_max) / rolling_max
-        max_drawdown = drawdowns.min() * -100.0  # Express as positive percentage
+        max_drawdown = abs(drawdowns.min()) * 100.0  # Express as positive percentage
 
         # Prepare stats dictionary
         stats = {
@@ -195,7 +222,7 @@ class Analyzer:
         return stats
 
 
-    def sensitivity_sweep(self, param_grid: dict, backtest_fn=None) -> pd.DataFrame:
+    def sensitivity_sweep(self, param_grid: dict, backtest_fn=None, parallel_backend: str = 'auto') -> pd.DataFrame:
         """Run a grid search over parameter combinations and collect performance stats.
 
         Parameters:
@@ -203,6 +230,12 @@ class Analyzer:
                 Example: {'VM': [10, 20], 'lookback': [20, 40], 'commission': [0.001, 0.002]}
             backtest_fn: Optional callable(local_seed, **params) -> pd.DataFrame.
                 If None, uses a built-in synthetic placeholder for testing.
+            parallel_backend: 'auto' | 'process' | 'thread'. Backend for parallel execution when
+                max_workers > 1.
+                - 'auto' (default): Uses threads for the built-in local placeholder backtest, and
+                  processes for user-provided functions (with automatic fallback to threads if pickling fails).
+                - 'process': Prefer process-based parallelism (may fail if functions are not picklable).
+                - 'thread': Force thread-based parallelism (most compatible; subject to GIL for CPU-bound work).
 
         Returns:
             DataFrame with one row per successful combination (parameters merged with
@@ -214,6 +247,8 @@ class Analyzer:
 
         Parallelism:
             - max_workers is clamped to min(cpu_count, 8) to avoid oversubscription.
+            - Note: Process-based parallelism requires picklable functions (module-level, no closures/lambdas).
+              When using the default local placeholder backtest, threads are used for compatibility.
 
         Side effects:
             - Results saved to self.output_dir/sensitivity_sweep.csv if self.save=True
@@ -240,6 +275,8 @@ class Analyzer:
         logging.info(f"Starting sensitivity sweep over {total} combinations: {param_names}")
 
         # -------------------- Backtest function --------------------
+        # Capture whether we're using the built-in placeholder before possibly defining it
+        is_default_backtest = backtest_fn is None
         if backtest_fn is None:
             # Default placeholder for testing
             def backtest_fn(local_seed: int, **params) -> pd.DataFrame:
@@ -255,35 +292,61 @@ class Analyzer:
                     'AUM': 100000 * np.cumprod(1 + ret)
                 })
 
-        # -------------------- Worker --------------------
-        def run_combo(idx_params: tuple) -> tuple:
-            idx, params_tuple = idx_params
-            params = dict(zip(param_names, params_tuple))
-            try:
-                local_seed = self.seed + idx
-                pnl = backtest_fn(local_seed=local_seed, **params)
-                stats = self.compute_perf_stats(pnl)
-                merged = {**params, **stats}
-                return (True, merged, None)
-            except (ValueError, RuntimeError) as e:
-                return (False, None, f"{type(e).__name__}: {e}")
-            except Exception as e:
-                return (False, None, f"Unexpected {type(e).__name__}: {e}")
+        # Validate/resolve parallel backend
+        backend_normalized = (parallel_backend or 'auto').strip().lower()
+        if backend_normalized not in {'auto', 'process', 'thread'}:
+            raise ValueError("parallel_backend must be one of {'auto','process','thread'}")
+        if backend_normalized == 'auto':
+            # Use threads for local placeholder (not picklable), processes for user-provided functions
+            resolved_backend = 'thread' if is_default_backtest else 'process'
+        else:
+            resolved_backend = backend_normalized  # 'thread' or 'process'
+
+        # -------------------- Prepare worker arguments --------------------
+        # Package arguments for module-level worker function
+        worker_args = [ (idx, combo, param_names, self.seed, backtest_fn, self.trading_days)
+            for idx, combo in enumerate(combos)]
 
         # -------------------- Execution (parallel or sequential) --------------------
         results = []
+        
         if self.max_workers > 1:
-            with concurrent.futures.ProcessPoolExecutor(max_workers=self.max_workers) as executor:
-                for i, (success, data, err) in enumerate(executor.map(run_combo, enumerate(combos))):
-                    if success:
-                        results.append(data)
-                    else:
-                        logging.error(f"Combo failed: {err}")
-                    if (i + 1) % self.log_every == 0 or (i + 1) == total:
-                        logging.info(f"Progress {i+1}/{total} ({(i+1)/total:.1%})")
+            # Choose executor based on resolved backend
+            if resolved_backend == 'thread':
+                logging.info("Using ThreadPoolExecutor for parallel execution")
+                executor_class = concurrent.futures.ThreadPoolExecutor
+            else:
+                logging.info("Using ProcessPoolExecutor for parallel execution")
+                executor_class = concurrent.futures.ProcessPoolExecutor
+            
+            try:
+                with executor_class(max_workers=self.max_workers) as executor:
+                    for i, (success, data, err) in enumerate(executor.map(_run_backtest_combo, worker_args)):
+                        if success:
+                            results.append(data)
+                        else:
+                            logging.error(f"Combo failed: {err}")
+                        if (i + 1) % self.log_every == 0 or (i + 1) == total:
+                            logging.info(f"Progress {i+1}/{total} ({(i+1)/total:.1%})")
+            except Exception as e:
+                if resolved_backend == 'process' and 'pickle' in str(e).lower():
+                    # Fallback to ThreadPoolExecutor if ProcessPoolExecutor fails with pickle error
+                    logging.warning("ProcessPoolExecutor failed due to pickling; falling back to ThreadPoolExecutor")
+                    results = []
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                        for i, (success, data, err) in enumerate(executor.map(_run_backtest_combo, worker_args)):
+                            if success:
+                                results.append(data)
+                            else:
+                                logging.error(f"Combo failed: {err}")
+                            if (i + 1) % self.log_every == 0 or (i + 1) == total:
+                                logging.info(f"Progress {i+1}/{total} ({(i+1)/total:.1%})")
+                else:
+                    raise
         else:
-            for i, combo in enumerate(combos):
-                success, data, err = run_combo((i, combo))
+            # Sequential execution
+            for i, args in enumerate(worker_args):
+                success, data, err = _run_backtest_combo(args)
                 if success:
                     results.append(data)
                 else:
