@@ -40,7 +40,6 @@ class DataCleaner:
             raise
         
         if self.df.empty:
-            logger.error("Error: The DataFrame is empty after reading the CSV file.")
             raise ValueError("Error: The DataFrame is empty after reading the CSV file.")
         
         if 'caldt' not in self.df.columns or 'close' not in self.df.columns:
@@ -70,18 +69,17 @@ class DataCleaner:
         if 'caldt' not in self.df.columns:
             raise ValueError('Time column "caldt" might be missing or have a different name')
         
-        # truncating the timezone info
+        # Truncating the timezone info
         self.df['caldt']=self.df['caldt'].astype(str)
         try:
             self.df['Datetime'] = pd.to_datetime(self.df['caldt'], errors='raise')
             
-            # Verifica se Pandas ha fallito l'inferenza e ha lasciato object (raro, ma possibile)
             if self.df['Datetime'].dtype == object:
                 raise ValueError("Pandas failed to infer datetime type automatically.")
 
-        except (Exception, ValueError): # Cattura l'errore se la conversione automatica fallisce
+        except (Exception, ValueError): 
             
-            # --- Tentativo 2: Fallback con Formato Specifico ---
+            
             logging.warning("Automatic datetime inference failed. Attempting fallback format: '%Y-%m-%d %H:%M:%S%z'")
             
             try:
@@ -94,9 +92,8 @@ class DataCleaner:
                 )
                 
             except ValueError as e:
-                # Se anche il formato specifico fallisce, logga e prosegui con NaT
                 logging.error(f"Failed to parse dates even with explicit format {specific_format}: {e}")
-                self.df['Datetime'] = pd.to_datetime(self.df['caldt'], errors='coerce') # Fallback finale a NaT
+                self.df['Datetime'] = pd.to_datetime(self.df['caldt'], errors='coerce') 
 
         nat_count: int = self.df['Datetime'].isna().sum()
         if nat_count > 0:
@@ -296,18 +293,16 @@ class DataCleaner:
         (e.g., using a pickle format for efficient storage).
 
         Args:
-            path (str): The file path where the DataFrame should be saved.
+            filename (str): The name we want to store the picklefile as.
         """
         try:
-            # 1. Istanzia l'helper con il DataFrame
+            
             helper = PickleHelper(self.df)
-
-            # 2. Chiama il metodo, passando SOLO il nome del file
             helper.pickle_dump(filename)
             
-            # Il logging qui è ora gestito principalmente da PickleHelper
+            # error handled by PickleHelper class
         except Exception as e:
-            # L'errore è già stato loggato in PickleHelper, ma lo logghiamo anche qui per contesto
+            
             logger.error(f"Failed to save data: {e}") 
             raise
         
