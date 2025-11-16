@@ -320,7 +320,10 @@ class Analyzer:
         is_default_backtest = backtest_fn is None
         
         if backtest_fn is None:
-            # Default placeholder for testing
+            # Default placeholder for testing.
+            # NOTE: This is a nested function and thus unpicklable, so it cannot be used with
+            # ProcessPoolExecutor. This is safe because the code ensures the 'thread' backend
+            # is used when this default is active (see is_default_backtest and backend selection).
             def backtest_fn(local_seed: int, **params) -> pd.DataFrame:
                 """Synthetic placeholder backtest generating random returns."""
                 VM = params.get('VM', 10)
