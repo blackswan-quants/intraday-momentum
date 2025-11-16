@@ -12,6 +12,12 @@ import concurrent.futures
 import pickle
 import os
 
+# Import BrokenProcessPool explicitly for robust exception handling
+try:
+    from concurrent.futures.process import BrokenProcessPool
+except ImportError:
+    BrokenProcessPool = type(None)  # Fallback for compatibility
+
 # Ensure INFO messages include the actual message text in the console
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -374,7 +380,7 @@ class Analyzer:
                             logging.info(f"Progress {i+1}/{total} ({(i+1)/total:.1%})")
             except Exception as e:
                 # Fallback to threads for common process-pool failures related to pickling or worker crashes
-                is_broken_pool = isinstance(e, concurrent.futures.process.BrokenProcessPool)
+                is_broken_pool = isinstance(e, BrokenProcessPool)
                 is_pickle_error = isinstance(e, (pickle.PickleError, AttributeError, TypeError))
                 
                 # Check error message for pickle-related keywords as additional fallback
