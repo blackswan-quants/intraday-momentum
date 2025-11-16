@@ -309,6 +309,22 @@ class Analyzer:
             if not isinstance(v, (list, tuple)) or len(v) == 0:
                 raise ValueError(f"param_grid['{k}'] must be a non-empty list or tuple of values")
 
+        # Additional validation: check picklability of parameter values if using process backend
+        # Only check if parallel_backend is 'process' (or will resolve to 'process')
+        backend = parallel_backend
+        if backend == 'auto' and not is_default_backtest:
+            backend = 'process'
+        if backend == 'process':
+            for k, v in param_grid.items():
+                for i, item in enumerate(v):
+                    try:
+                        pickle.dumps(item)
+                    except Exception as e:
+                        raise ValueError(
+                            f"param_grid['{k}'][{i}] = {repr(item)} is not picklable and cannot be used with process-based parallelism. "
+                            f"Error: {e}\n"
+                            f"Consider using only simple types (int, float, str, etc.) or switching to parallel_backend='thread'."
+                        )
         param_names = list(param_grid.keys())
         param_values = list(param_grid.values())
         combos = list(itertools.product(*param_values))
