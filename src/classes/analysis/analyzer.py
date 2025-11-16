@@ -73,6 +73,12 @@ def _compute_perf_stats_core(daily_pnl_df: pd.DataFrame, trading_days: int) -> d
 
                 # model.params['const'] is the daily intercept (in decimal daily returns)
                 alpha_daily = float(model.params.get('const', 0.0))
+                # Check for extreme alpha_daily values
+                if alpha_daily < -0.5 or alpha_daily > 0.5:
+                    logging.warning(
+                        f"Alpha daily estimate {alpha_daily:.6f} is extreme; "
+                        "annualization may be unreliable."
+                    )
                 # Annualize by compounding: (1 + daily_alpha)^trading_days - 1, then convert to percent
                 try:
                     alpha = ((1.0 + alpha_daily) ** trading_days - 1.0) * 100.0
