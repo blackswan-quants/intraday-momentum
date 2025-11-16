@@ -370,6 +370,7 @@ class Analyzer:
                 msg = str(e).lower()
                 msg_has_pickle_hints = "pickle" in msg
                 
+                # Fallback to threads only when process backend was attempted
                 should_fallback = resolved_backend == 'process' and (is_broken_pool or is_pickle_error or msg_has_pickle_hints)
                 if should_fallback:
                     logging.warning("ProcessPoolExecutor failed (likely pickling/worker issue); falling back to ThreadPoolExecutor")
