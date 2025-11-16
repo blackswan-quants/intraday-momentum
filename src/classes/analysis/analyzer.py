@@ -111,15 +111,21 @@ def _compute_perf_stats_core(daily_pnl_df: pd.DataFrame, trading_days: int) -> d
                     "AUM is present but the first valid value is invalid (<=0 or non-finite). "
                     "Falling back to synthetic cumulative return from 'ret' to compute drawdown."
                 )
+                if (returns <= -1).any():
+                    logging.warning("Returns contain values <= -1, which may cause invalid cumulative returns.")
                 cumulative_return = (1 + returns).cumprod()
         else:
             logging.warning(
                 "AUM column exists but contains no valid (non-NaN) entries. "
                 "Falling back to synthetic cumulative return from 'ret' to compute drawdown."
             )
+            if (returns <= -1).any():
+                logging.warning("Returns contain values <= -1, which may cause invalid cumulative returns.")
             cumulative_return = (1 + returns).cumprod()
     else:
         # Use synthetic cumulative equity curve from returns when AUM is unavailable
+        if (returns <= -1).any():
+            logging.warning("Returns contain values <= -1, which may cause invalid cumulative returns.")
         cumulative_return = (1 + returns).cumprod()
 
     # Check for empty or all-NaN cumulative_return before drawdown calculation
