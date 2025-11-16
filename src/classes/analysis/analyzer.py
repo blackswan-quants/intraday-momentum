@@ -404,7 +404,9 @@ class Analyzer:
                 should_fallback = resolved_backend == 'process' and (is_broken_pool or is_pickle_error or msg_has_pickle_hints)
                 if should_fallback:
                     logging.warning("ProcessPoolExecutor failed (likely pickling/worker issue); falling back to ThreadPoolExecutor")
-                    results = []
+                    # Do NOT reset results; salvage any partial results from the failed ProcessPoolExecutor.
+                    if results:
+                        logging.info(f"Salvaged {len(results)} partial results from failed ProcessPoolExecutor; continuing with ThreadPoolExecutor for remaining tasks.")
                     with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) as executor:
                         for i, (success, data, err) in enumerate(executor.map(_run_backtest_combo, worker_args)):
                             if success:
