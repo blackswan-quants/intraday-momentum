@@ -122,9 +122,14 @@ def _compute_perf_stats_core(daily_pnl_df: pd.DataFrame, trading_days: int) -> d
         # Use synthetic cumulative equity curve from returns when AUM is unavailable
         cumulative_return = (1 + returns).cumprod()
 
-    rolling_max = cumulative_return.expanding().max()
-    drawdowns = (cumulative_return - rolling_max) / rolling_max
-    max_drawdown = abs(drawdowns.min()) * 100.0  # Express as positive percentage
+    # Check for empty or all-NaN cumulative_return before drawdown calculation
+    if len(cumulative_return) == 0 or cumulative_return.isna().all():
+        logging.warning("Cumulative return is empty or all NaN; setting max_drawdown to 0")
+        max_drawdown = 0.0
+    else:
+        rolling_max = cumulative_return.expanding().max()
+        drawdowns = (cumulative_return - rolling_max) / rolling_max
+        max_drawdown = abs(drawdowns.min()) * 100.0  # Express as positive percentage
 
     # Prepare stats dictionary
     stats = {
