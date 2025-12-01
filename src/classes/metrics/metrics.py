@@ -143,9 +143,7 @@ class MetricsCalculator:
     def compute_intraday_profiles(self, df: pd.DataFrame) -> pd.DataFrame:
         """Average intraday profiles."""
         if "minute_of_day" not in df.columns:
-            df["minute_of_day"] = (
-                df["Datetime"].dt.hour * 60 + df["Datetime"].dt.minute
-            ).astype(int)
+            df["minute_of_day"] = (df.index.hour * 60 + df.index.minute).astype(int)
 
         return (
             df.groupby("minute_of_day")[["vwap", "RV", "BV", "price", "log_returns"]]
@@ -153,7 +151,7 @@ class MetricsCalculator:
             .astype(float)
         )
 
-        # -------------------------------------------------------------------------
+    # -------------------------------------------------------------------------
 
     # Additional SPY Intraday Metrics
     # -------------------------------------------------------------------------
