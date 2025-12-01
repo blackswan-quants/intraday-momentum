@@ -21,6 +21,95 @@ TRADING_DAYS = 252
 # Maximum worker cap to prevent excessive thread/process spawning and resource contention
 MAX_WORKERS_CAP = 8
 
+def compute_intraday_cum_vwap(self, df: pd.DataFrame) -> None:
+    """
+    Compute cumulative intraday VWAP for each day (as in your reference code).
+    """
+    self.logger.info("Computing cumulative intraday VWAP...")
+
+    df["hlc"] = (df["high"] + df["low"] + df["close"]) / 3
+
+    # group by day
+    for d, day_data in df.groupby("day"):
+        cum_vol_x_hlc = (day_data["hlc"] * day_data["volume"]).cumsum()
+        cum_volume = day_data["volume"].cumsum()
+
+        df.loc[day_data.index, "vwap"] = cum_vol_x_hlc / cum_volume
+
+def compute_move_open(self, df: pd.DataFrame) -> None:
+    """
+    Compute absolute return from daily open.
+    """
+    self.logger.info("Computing move_open...")
+
+    df["move_open"] = np.nan
+    for d, day_data in df.groupby("day"):
+        open_price = day_data["open"].iloc[0]
+        df.loc[day_data.index, "move_open"] = (day_data["close"] / open_price - 1).abs()
+
+def compute_daily_returns_and_vol(self, df: pd.DataFrame) -> None:
+    """
+    Compute daily return (using previous close) and 15-day rolling volatility.
+    """
+    self.logger.info("Computing spy_ret and daily volatility...")
+
+    all_days = df["day"].unique()
+    daily_groups = df.groupby("day")
+
+    spy_ret = pd.Series(index=all_days, dtype=float)
+    df["spy_dvol"] = np.nan
+
+    for i in range(1, len(all_days)):
+        cur, prev = all_days[i], all_days[i - 1]
+
+        cur_close = daily_groups.get_group(cur)["close"].iloc[-1]
+        prev_close = daily_groups.get_group(prev)["close"].iloc[-1]
+
+        spy_ret.loc[cur] = cur_close / prev_close - 1
+
+        if i > 14:  # need 15 days
+            df.loc[
+                daily_groups.get_group(cur).index,
+                "spy_dvol",
+            ] = spy_ret.iloc[i - 15 : i].std(skipna=False)
+
+    df["spy_ret"] = df["day"].map(spy_ret)
+
+def compute_minute_features(self, df: pd.DataFrame) -> None:
+    """
+    Compute minute_of_day, move_open rolling mean, and sigma_open.
+    """
+    self.logger.info("Computing minute-of-day features...")
+
+    # minutes from midnight – normalize to US equities 9:30
+    df["min_from_open"] = (
+        (df.index - df.index.normalize()) / pd.Timedelta(minutes=1)
+    ) - (9 * 60 + 30) + 1
+
+    df["minute_of_day"] = df["min_from_open"].round().astype(int)
+
+    minute_groups = df.groupby("minute_of_day")
+
+    df["move_open_rolling_mean"] = minute_groups["move_open"].transform(
+        lambda x: x.rolling(window=14, min_periods=13).mean()
+    )
+
+    df["sigma_open"] = df.groupby("minute_of_day")[
+        "move_open_rolling_mean"
+    ].transform(lambda x: x.shift(1))
+
+def merge_dividends(self, df: pd.DataFrame, dividends: pd.DataFrame) -> None:
+    """
+    Merge dividend data (already loaded).
+    """
+    self.logger.info("Merging dividends...")
+
+    dividends["day"] = pd.to_datetime(dividends["caldt"]).dt.date
+
+    df["day"] = df["Datetime"].dt.date
+    df.merge(dividends[["day", "dividend"]], on="day", how="left", inplace=True)
+    df["dividend"] = df["dividend"].fillna(0)
+
 
 # Core stats computation extracted to module level to avoid circular imports in subprocesses
 def _compute_perf_stats_core(daily_pnl_df: pd.DataFrame, trading_days: int) -> dict:
