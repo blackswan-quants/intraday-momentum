@@ -1,9 +1,10 @@
 from dataclasses import dataclass
 
+
 @dataclass(frozen=True)
 class BacktestDefaults:
     minute_path: str = "cleaned_df.pkl"
-    daily_path: str = "df_and_metrics.pkl"
+    daily_path: str = "df_daily.pkl"
     initial_aum: float = 100_000.0
     commission_rate: float = 0.0035
     min_comm_per_order: float = 0.35

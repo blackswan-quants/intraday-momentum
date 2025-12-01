@@ -1,6 +1,7 @@
 import logging
 import os
 from typing import Tuple, Optional, List
+
 import numpy as np
 import pandas as pd
 
@@ -30,7 +31,7 @@ class MetricsCalculator:
         'volume'   : float
     """
 
-    REQUIRED_COLUMNS = ["close", "high", "low", "volume"]
+    REQUIRED_COLUMNS = ["Datetime", "close", "high", "low", "volume"]
 
     def __init__(self, save_path: str = "data/processed/") -> None:
         """
@@ -68,9 +69,8 @@ class MetricsCalculator:
         self._validate_input(df)
 
         df = df.copy()
-        df.index = pd.to_datetime(df.index, errors="coerce")
-        # Extract day
-        df["day"] = df.index.date
+        df["Datetime"] = pd.to_datetime(df["Datetime"], errors="coerce")
+        df["day"] = df["Datetime"].dt.date
 
         # Logging
         self.logger.info("Starting computation of market microstructure metrics...")
