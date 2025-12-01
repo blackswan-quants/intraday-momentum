@@ -91,8 +91,8 @@ class MetricsCalculator:
             self.logger.error("Error computing metrics.", exc_info=True)
             raise RuntimeError("Metric computation failed.") from exc
 
-        df = df.reset_index().rename(columns={"index": "timestamp"})
-        df_daily = df.reset_index().rename(columns={"index": "timestamp"})
+        df = df.reset_index().rename(columns={"Datetime": "timestamp"})
+        df_daily = df.reset_index().rename(columns={"Datetime": "timestamp"})
         self.quality_check(df, df_daily)
 
         if save:
