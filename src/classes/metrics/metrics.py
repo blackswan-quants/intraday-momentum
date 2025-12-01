@@ -48,7 +48,7 @@ class MetricsCalculator:
     # Main Entry Point
     # -------------------------------------------------------------------------
     def from_clean_df(
-        self, df: pd.DataFrame, save: bool = True
+        self, df: pd.DataFrame, dividends : pd.DataFrame , save: bool = True
     ) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """
         Compute all metrics from a cleaned DataFrame and optionally save results.
@@ -80,12 +80,19 @@ class MetricsCalculator:
             self.compute_RV(df)
             self.compute_BV(df)
             self.compute_vwap(df)
+            self.compute_intraday_cum_vwap(df)
+            self.compute_move_open(df)
+            self.compute_daily_returns_and_vol(df)
+            self.compute_minute_features(df)
+            self.merge_dividends(df,dividends)
             df_daily = self.compute_intraday_profiles(df)
 
         except Exception as exc:
             self.logger.error("Error computing metrics.", exc_info=True)
             raise RuntimeError("Metric computation failed.") from exc
 
+        df = df.reset_index().rename(columns={"index": "timestamp"})
+        df_daily = df.reset_index().rename(columns={"index": "timestamp"})
         self.quality_check(df, df_daily)
 
         if save:
@@ -273,17 +280,21 @@ class MetricsCalculator:
     # Saving
     # -------------------------------------------------------------------------
     def _save_results(self, df_all: pd.DataFrame, df_daily: pd.DataFrame) -> None:
-        """Save results to pickle."""
+        """Save results to separate pickle files."""
         try:
             os.makedirs(self.save_path, exist_ok=True)
-            out_path = os.path.join(self.save_path, "df_and_metrics.pkl")
 
-            pd.to_pickle(
-                {"df_all_days": df_all, "df_daily_groups": df_daily},
-                out_path,
-            )
-            self.logger.info(f"Metrics saved to {out_path}")
+            # Save df_all
+            df_all_path = os.path.join(self.save_path, "df_all_days.pkl")
+            pd.to_pickle(df_all, df_all_path)
+            self.logger.info(f"df_all saved to {df_all_path}")
+
+            # Save df_daily
+            df_daily_path = os.path.join(self.save_path, "df_daily_groups.pkl")
+            pd.to_pickle(df_daily, df_daily_path)
+            self.logger.info(f"df_daily saved to {df_daily_path}")
 
         except Exception as exc:
             self.logger.error("Failed to save metrics.", exc_info=True)
             raise IOError(f"Error saving metrics to {self.save_path}") from exc
+
