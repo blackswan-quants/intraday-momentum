@@ -29,6 +29,9 @@ class DataCleaner:
         Args:
             csv_raw (str): The file path to the raw CSV data.
         """
+        try:
+            self.df = pd.read_csv(csv_raw)
+            self.name = csv_raw.split('/')[-1].replace('.csv', '')
 
         try:
             self.df = pd.read_csv(csv_raw)
@@ -69,16 +72,16 @@ class DataCleaner:
         if 'caldt' not in self.df.columns:
             raise ValueError('Time column "caldt" might be missing or have a different name')
         
-        # Truncating the timezone info
+        # Convert to string for processing
         self.df['caldt']=self.df['caldt'].astype(str)
         try:
-            self.df['Datetime'] = pd.to_datetime(self.df['caldt'], errors='raise')
+            # Try parsing with utc=True to handle timezone-aware strings
+            self.df['Datetime'] = pd.to_datetime(self.df['caldt'], errors='raise', utc=True)
             
             if self.df['Datetime'].dtype == object:
                 raise ValueError("Pandas failed to infer datetime type automatically.")
 
         except (Exception, ValueError): 
-            
             
             logging.warning("Automatic datetime inference failed. Attempting fallback format: '%Y-%m-%d %H:%M:%S%z'")
             
@@ -93,7 +96,8 @@ class DataCleaner:
                 
             except ValueError as e:
                 logging.error(f"Failed to parse dates even with explicit format {specific_format}: {e}")
-                self.df['Datetime'] = pd.to_datetime(self.df['caldt'], errors='coerce') 
+                # Final fallback - try without format but with utc=True
+                self.df['Datetime'] = pd.to_datetime(self.df['caldt'], errors='coerce', utc=True) 
 
         nat_count: int = self.df['Datetime'].isna().sum()
         if nat_count > 0:
@@ -166,7 +170,7 @@ class DataCleaner:
                 bins=100,
                 alpha=0.6
             )
-            ax1.set_title('1. Distribution of Intraday Logarithmic Returns') 
+            ax1.set_title(f'1. Distribution of {self.name} Logarithmic Returns')
             ax1.set_xlim(q_low, q_high) 
             ax1.axvline(x=0, color='red', linestyle='--', label='Zero Return')
             ax1.legend()
