@@ -620,6 +620,10 @@ class BacktestEngine:
         - ``data/processed/trade_log.csv``
         - ``data/processed/daily_pnl.pkl``
         """
+
+        self.trade_rows = []
+        self.daily_rows = []
+        
         minute_path: str = str(params.get("minute_path"))
         daily_path: str = str(params.get("daily_path"))
         initial_aum: float = float(params.get("initial_aum"))
@@ -743,6 +747,25 @@ class BacktestEngine:
                     dP: float = float(closes[idx] - closes[idx - 1])
                     day_gross += pos.shares * dP
 
+            if pos.shares != 0:
+                last_row = day_df.iloc[-1]
+                close_order_qty = -pos.shares
+                side = 1 if close_order_qty > 0 else -1
+
+                # Execute the close using the last bar's *close* price
+                close_order = Order(
+                    timestamp=last_row["timestamp"],
+                    day=last_row["day"],
+                    qty=close_order_qty,
+                    open_price=last_row["close"], 
+                    side=side,
+                )
+
+                fill = exec_model.execute_order(close_order, pos)
+                self.trade_rows.append(fill)
+                day_comm += float(fill["commission"])
+                day_slip += float(fill["slippage_cost"])
+    
             # end-of-day
             day_close: float = float(closes[-1])
             aum_eod: float = pos.value(day_close)
@@ -806,3 +829,4 @@ class BacktestEngine:
             raise
 
         return trade_log_df, daily_pnl_df, equity_curve_df
+
