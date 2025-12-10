@@ -76,10 +76,10 @@ class MetricsCalculator:
         self.logger.info("Starting computation of market microstructure metrics...")
 
         try:
+            self.compute_vwap(df)
             self.compute_log_returns(df)
             self.compute_RV(df)
             self.compute_BV(df)
-            self.compute_vwap(df)
             self.compute_intraday_cum_vwap(df)
             self.compute_move_open(df)
             self.compute_daily_returns_and_vol(df)
@@ -159,7 +159,6 @@ class MetricsCalculator:
         )
 
     # -------------------------------------------------------------------------
-
     # Additional SPY Intraday Metrics
     # -------------------------------------------------------------------------
 

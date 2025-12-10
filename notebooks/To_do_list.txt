@@ -1,0 +1,7 @@
+TO DO LIST : 
+    Part 1 Check Metric quality : 
+        -> Simply compute by hand the Lower and Upper bound of the study 
+        -> Compare and adjust until good
+
+    Part 2 : With some luck it we do not need it 
+        -> Go through the backtest engine and adjust 
