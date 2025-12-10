@@ -122,8 +122,8 @@ class Sizer:
     ----------
     sizing_type : str, default="vol_target"
         Sizing rule to use. Supported:
-        - ``"vol_target"``: target volatility with leverage cap.
-        - ``"full_notional"``: fully invest AUM at the open.
+        - "vol_target": target volatility with leverage cap.
+        - "full_notional": fully invest AUM at the open.
 
     Attributes
     ----------
@@ -138,7 +138,7 @@ class Sizer:
         Parameters
         ----------
         sizing_type : str, default="vol_target"
-            Sizing rule to use: ``"vol_target"`` or ``"full_notional"``.
+            Sizing rule to use: "vol_target" or "full_notional".
         """
         self.sizing_type: str = sizing_type
 
@@ -174,7 +174,7 @@ class Sizer:
 
         Notes
         -----
-        For ``sizing_type == "vol_target"`` the leverage :math:`\\ell_t` is
+        For sizing_type == "vol_target" the leverage :math:`\\ell_t` is
 
         .. math::
 
@@ -187,7 +187,7 @@ class Sizer:
 
             N_t = \\operatorname{round}\\big( \\ell_t \\cdot \\tfrac{\\text{AUM}_{t-1}}{P_{t,\\text{open}}} \\big) \\, .
 
-        For ``"full_notional"``, :math:`N_t = \\operatorname{round}( \\text{AUM}_{t-1}/P_{t,\\text{open}} )`.
+        For "full_notional", :math:`N_t = \\operatorname{round}( \\text{AUM}_{t-1}/P_{t,\\text{open}} )`.
         """
         if price_open is None or price_open <= 0.0:
             return 0
@@ -312,9 +312,9 @@ class ExecutionModel:
         -------
         dict
             A dictionary suitable for appending to a trade log with keys:
-            ``timestamp``, ``day``, ``side``, ``qty``, ``price_open``,
-            ``price_exec``, ``commission``, ``slippage_cost``,
-            ``shares_after``, ``cash_after``.
+            timestamp, day, side, qty, price_open,
+            price_exec, commission, slippage_cost,
+            shares_after, cash_after.
 
         Notes
         -----
@@ -377,13 +377,13 @@ class BacktestEngine:
         ----------
         path : str
             Path to a pickled pandas DataFrame with minute bars. Must include
-            columns: ``timestamp``, and (or derived) ``day`` plus
-            ``open``, ``close``, ``vwap``, ``sigma_open``, ``spy_dvol``, ``min_from_open``.
+            columns: timestamp, and (or derived) day plus
+            open, close, vwap, sigma_open, spy_dvol, min_from_open.
 
         Returns
         -------
         pandas.DataFrame
-            Minute data sorted by ``timestamp`` with ensured ``day`` column.
+            Minute data sorted by timestamp with ensured day column.
 
         Raises
         ------
@@ -410,13 +410,13 @@ class BacktestEngine:
         ----------
         path : str
             Path to a pickled pandas DataFrame expected to contain columns
-            ``caldt`` (calendar date) and ``close`` (close price).
+            caldt (calendar date) and close (close price).
 
         Returns
         -------
         pandas.DataFrame or None
-            DataFrame indexed by ``caldt`` with a single column ``ret_spy`` if
-            available; otherwise ``None``.
+            DataFrame indexed by caldt with a single column ret_spy if
+            available; otherwise None.
 
         Notes
         -----
@@ -533,7 +533,7 @@ class BacktestEngine:
             Minute offset (0-based) from session open.
         trade_freq : int
             Trading frequency in minutes; signals are *eligible* only where
-            ``minutes_from_open % trade_freq == 0``.
+            minutes_from_open % trade_freq == 0.
         index_like : Iterable[Any]
             Index used to align a Pandas shift; typically the minute index for the day.
         ffill_zero : bool, default False
@@ -583,24 +583,24 @@ class BacktestEngine:
         ----------
         params : dict
             Dictionary of parameters:
-            - ``minute_path`` : str
-            - ``daily_path`` : str
-            - ``initial_aum`` : float
-            - ``commission_rate`` : float
-            - ``min_comm_per_order`` : float
-            - ``slippage_bps`` : int
-            - ``band_mult`` : float
-            - ``trade_freq`` : int
-            - ``sizing_type`` : str
-            - ``target_vol`` : float
-            - ``max_leverage`` : float
+            - minute_path : str
+            - daily_path : str
+            - initial_aum : float
+            - commission_rate : float
+            - min_comm_per_order : float
+            - slippage_bps : int
+            - band_mult : float
+            - trade_freq : int
+            - sizing_type : str
+            - target_vol : float
+            - max_leverage : float
 
         Returns
         -------
         (pandas.DataFrame, pandas.DataFrame, pandas.DataFrame)
-            ``trade_log_df`` (row per fill),
-            ``daily_pnl_df`` (index = day),
-            ``equity_curve_df`` (index = day).
+            trade_log_df (row per fill),
+            daily_pnl_df (index = day),
+            equity_curve_df (index = day).
 
         Notes
         -----
@@ -617,9 +617,13 @@ class BacktestEngine:
         Side Effects
         ------------
         Saves outputs to:
-        - ``data/processed/trade_log.csv``
-        - ``data/processed/daily_pnl.pkl``
+        - data/processed/trade_log.csv
+        - data/processed/daily_pnl.pkl
         """
+
+        self.trade_rows = []
+        self.daily_rows = []
+        
         minute_path: str = str(params.get("minute_path"))
         daily_path: str = str(params.get("daily_path"))
         initial_aum: float = float(params.get("initial_aum"))
@@ -743,6 +747,25 @@ class BacktestEngine:
                     dP: float = float(closes[idx] - closes[idx - 1])
                     day_gross += pos.shares * dP
 
+            if pos.shares != 0:
+                last_row = day_df.iloc[-1]
+                close_order_qty = -pos.shares
+                side = 1 if close_order_qty > 0 else -1
+
+                # Execute the close using the last bar's *close* price
+                close_order = Order(
+                    timestamp=last_row["timestamp"],
+                    day=last_row["day"],
+                    qty=close_order_qty,
+                    open_price=last_row["close"], 
+                    side=side,
+                )
+
+                fill = exec_model.execute_order(close_order, pos)
+                self.trade_rows.append(fill)
+                day_comm += float(fill["commission"])
+                day_slip += float(fill["slippage_cost"])
+    
             # end-of-day
             day_close: float = float(closes[-1])
             aum_eod: float = pos.value(day_close)
