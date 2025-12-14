@@ -56,14 +56,18 @@ class MetricsCalculator:
         Parameters
         ----------
         df : pd.DataFrame
-            Input DataFrame with required columns.
+            Input DataFrame with required columns : [ "close", "high", "low", "volume"]
+            index must be the date
+        df : Dividens 
+            Input DataFrame with dividends
+            index must be date
         save : bool
             Save results to disk if True.
 
         Returns
         -------
         df_all_days : pd.DataFrame
-        df_daily_profiles : pd.DataFrame
+        df_daily_profiles : pd.DataFrame (aggregated per day df)
         """
         self._validate_input(df)
 
@@ -76,14 +80,8 @@ class MetricsCalculator:
         self.logger.info("Starting computation of market microstructure metrics...")
 
         try:
-            self.compute_vwap(df)
-            self.compute_log_returns(df)
-            self.compute_RV(df)
-            self.compute_BV(df)
+            self.compute_bounds(df)
             self.compute_intraday_cum_vwap(df)
-            self.compute_move_open(df)
-            self.compute_daily_returns_and_vol(df)
-            self.compute_minute_features(df)
             self.merge_dividends(df,dividends)
             df_daily = self.compute_intraday_profiles(df)
 
@@ -115,52 +113,58 @@ class MetricsCalculator:
     # -------------------------------------------------------------------------
     # Computations
     # -------------------------------------------------------------------------
-    def compute_log_returns(self, df: pd.DataFrame) -> None:
-        """Compute log returns."""
-        df["log_returns"] = np.log(df["close"] / df["close"].shift(1))
+    
+    def compute_bounds(self, df : pd.DataFrame) -> None:
+        """
+        Function that compute lower and upper bound
+        """
 
-    def compute_RV(self, df: pd.DataFrame) -> None:
-        """Compute daily Realized Volatility."""
-        rv = (
-            df.groupby("day")["log_returns"]
-            .apply(lambda x: np.sqrt(np.sum(np.square(x.dropna()))))
-            .astype(float)
+        # Get first timestamp per day and expand to all rows in that day
+        first_ts_per_day = df.groupby("day").apply(lambda x: x.index[0], include_groups=False)
+        first_ts = df["day"].map(first_ts_per_day)
+
+        df["minute_of_day"] = ((df.index - first_ts).dt.total_seconds() // 60).astype(int)
+
+        open_930_per_day = (
+            df.groupby("day").first()["open"]
         )
-        df["RV"] = df["day"].map(rv)
 
-    def compute_BV(self, df: pd.DataFrame) -> None:
-        """Compute Bipower Variation."""
-        bv = (
-            df.groupby("day")["log_returns"]
-            .apply(lambda x: np.sum(np.abs(x.shift(1).dropna()) * np.abs(x)))
-            .astype(float)
+        df["open_at_930"] = df["day"].map(open_930_per_day)
+
+        df["move"] = (df["close"] / df["open_at_930"] - 1).abs()
+
+        agg = (
+            df.groupby(["day", "minute_of_day"])
+                .agg(move=("move", "last"))
+                .reset_index()
         )
-        df["BV"] = df["day"].map(bv)
+        agg = agg.sort_values(["minute_of_day", "day"])
 
-    def compute_vwap(self, df: pd.DataFrame) -> None:
-        """Compute daily VWAP."""
-        df["price"] = (df["high"] + df["low"] + df["close"]) / 3
-        vwap = (
-            df.groupby("day")[["price", "volume"]]
-            .apply(lambda x: (x["price"] * x["volume"]).sum() / x["volume"].sum())
-            .astype(float)
-        )
-        df["vwap"] = df["day"].map(vwap)
-
-    def compute_intraday_profiles(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Average intraday profiles."""
-        if "minute_of_day" not in df.columns:
-            df["minute_of_day"] = (df.index.hour * 60 + df.index.minute).astype(int)
-
-        return (
-            df.groupby("minute_of_day")[["vwap", "RV", "BV", "price", "log_returns"]]
+        agg["sigma_roling_14d"] = (
+            agg.groupby("minute_of_day")["move"]
+            .rolling(14, min_periods=2)
             .mean()
-            .astype(float)
+            .reset_index(level=0, drop=True)
         )
 
-    # -------------------------------------------------------------------------
-    # Additional SPY Intraday Metrics
-    # -------------------------------------------------------------------------
+        df = df.merge(
+            agg[["day", "minute_of_day", "sigma"]],
+            on=["day", "minute_of_day"],
+            how="left"
+        )
+
+        # Get last close per day and shift to get previous day's close
+        last_close_per_day = df.groupby("day")["close"].last()
+        prev_close_per_day = last_close_per_day.shift(1)
+        df["prev_close"] = df["day"].map(prev_close_per_day)
+
+        df["open_ref"] = df[["open_at_930","prev_close"]].max(axis=1)
+        df["low_ref"]  = df[["open_at_930","prev_close"]].min(axis=1)
+
+        df["upper_bnd"] = df["open_ref"] * (1 + df["sigma"])
+        df["lower_bnd"] = df["low_ref"]  * (1 - df["sigma"])
+        df.drop(columns= ["open_ref", "low_ref", "prev_close", "open_at_930","move"])
+    
 
     def compute_intraday_cum_vwap(self, df: pd.DataFrame) -> None:
         """Compute cumulative intraday VWAP for each day."""
@@ -174,62 +178,17 @@ class MetricsCalculator:
             cum_volume = group["volume"].cumsum()
             df.loc[group.index, "vwap"] = cum_vol_price / cum_volume
 
-    def compute_move_open(self, df: pd.DataFrame) -> None:
-        """Compute intraday absolute move from daily open."""
-        if "day" not in df.columns:
-            raise ValueError("Column 'day' must exist before calling this method.")
+        
+    def compute_intraday_profiles(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Average intraday profiles."""
+        if "minute_of_day" not in df.columns:
+            df["minute_of_day"] = (df.index.hour * 60 + df.index.minute).astype(int)
 
-        df["move_open"] = np.nan
-
-        for d, group in df.groupby("day"):
-            open_price = group["open"].iloc[0]
-            df.loc[group.index, "move_open"] = (group["close"] / open_price - 1).abs()
-
-    def compute_daily_returns_and_vol(self, df: pd.DataFrame) -> None:
-        """Compute daily returns and 15-day rolling volatility."""
-        if "day" not in df.columns:
-            raise ValueError("Column 'day' must exist before calling this method.")
-
-        days = df["day"].unique()
-        daily_groups = df.groupby("day")
-        spy_ret = pd.Series(index=days, dtype=float)
-        df["spy_dvol"] = np.nan
-
-        for i in range(1, len(days)):
-            cur, prev = days[i], days[i - 1]
-            cur_close = daily_groups.get_group(cur)["close"].iloc[-1]
-            prev_close = daily_groups.get_group(prev)["close"].iloc[-1]
-            spy_ret.loc[cur] = cur_close / prev_close - 1
-
-            if i > 14:
-                df.loc[daily_groups.get_group(cur).index, "spy_dvol"] = spy_ret.iloc[
-                    i - 15 : i
-                ].std()
-
-        df["spy_ret"] = df["day"].map(spy_ret)
-
-    def compute_minute_features(self, df: pd.DataFrame) -> None:
-        """Compute minute_of_day, rolling mean and sigma for move_open."""
-        if not isinstance(df.index, pd.DatetimeIndex):
-            raise TypeError("DatetimeIndex required for minute_of_day computation.")
-
-        df["min_from_open"] = (
-            ((df.index - df.index.normalize()) / pd.Timedelta(minutes=1))
-            - (9 * 60 + 30)
-            + 1
+        return (
+            df.groupby("minute_of_day")[[]] #to change
+            .mean()
+            .astype(float)
         )
-
-        df["minute_of_day"] = df["min_from_open"].round().astype(int)
-
-        groups = df.groupby("minute_of_day")
-
-        df["move_open_rolling_mean"] = groups["move_open"].transform(
-            lambda x: x.rolling(window=14, min_periods=13).mean()
-        )
-
-        df["sigma_open"] = df.groupby("minute_of_day")[
-            "move_open_rolling_mean"
-        ].transform(lambda x: x.shift(1))
 
     def merge_dividends(self, df: pd.DataFrame, dividends: pd.DataFrame) -> None:
         """Merge dividend payments into the main dataframe."""
@@ -241,39 +200,6 @@ class MetricsCalculator:
 
         df["dividend"] = df["day"].map(dividends.set_index("day")["dividend"]).fillna(0)
 
-    # -------------------------------------------------------------------------
-    # Quality Check
-    # -------------------------------------------------------------------------
-    def quality_check(
-        self,
-        df_all: pd.DataFrame,
-        df_daily: pd.DataFrame,
-        expected: Optional[List[str]] = None,
-    ) -> None:
-        """Perform data integrity checks and log results."""
-        expected = expected or [
-            "log_returns",
-            "RV",
-            "BV",
-            "vwap",
-            "price",
-            "day",
-        ]
-
-        self.logger.info("Running quality checks...")
-
-        missing_cols = [c for c in expected if c not in df_all.columns]
-        if missing_cols:
-            self.logger.warning(f"Missing expected columns: {missing_cols}")
-
-        nan_summary = df_all[expected].isna().sum()
-        self.logger.info(f"NaN summary:\n{nan_summary}")
-
-        if (df_all["RV"] < 0).any() or (df_all["BV"] < 0).any():
-            self.logger.warning("Negative values detected in RV/BV.")
-
-        self.logger.info(f"df_all_days shape: {df_all.shape}")
-        self.logger.info(f"df_daily_profiles shape: {df_daily.shape}")
 
     # -------------------------------------------------------------------------
     # Saving
