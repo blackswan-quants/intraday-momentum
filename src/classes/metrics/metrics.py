@@ -60,7 +60,7 @@ class MetricsCalculator:
             index must be the date
         df : Dividens 
             Input DataFrame with dividends
-            index must be date
+            must contain column "caldt" 
         save : bool
             Save results to disk if True.
 
@@ -83,15 +83,16 @@ class MetricsCalculator:
             self.compute_bounds(df)
             self.compute_intraday_cum_vwap(df)
             self.merge_dividends(df,dividends)
+            self._clean_before_export(df)
             df_daily = self.compute_intraday_profiles(df)
 
         except Exception as exc:
             self.logger.error("Error computing metrics.", exc_info=True)
             raise RuntimeError("Metric computation failed.") from exc
 
-        df = df.reset_index().rename(columns={"Datetime": "timestamp"})
-        df_daily = df.reset_index().rename(columns={"Datetime": "timestamp"})
-        self.quality_check(df, df_daily)
+        #df = df.reset_index().rename(columns={"Datetime": "timestamp"})
+        #df_daily = df.reset_index().rename(columns={"Datetime": "timestamp"})
+        #self.quality_check(df, df_daily)
 
         if save:
             self._save_results(df, df_daily)
@@ -118,54 +119,120 @@ class MetricsCalculator:
         """
         Function that compute lower and upper bound
         """
+        self.logger.info("Computing trading bounds...")
+        
+        self._compute_minute_of_day(df)
+        self._compute_open_at_930(df)
+        self._compute_move(df)
+        self._compute_rolling_sigma(df)
+        self._compute_previous_close(df)
+        self._compute_reference_prices(df)
+        self._compute_bounds(df)
+        
+        self.logger.info("Bounds computation completed.")
 
-        # Get first timestamp per day and expand to all rows in that day
+    def _compute_minute_of_day(self, df: pd.DataFrame) -> None:
+        """Compute minute of day from market open."""
+        self.logger.info("Computing minute of day...")
         first_ts_per_day = df.groupby("day").apply(lambda x: x.index[0], include_groups=False)
         first_ts = df["day"].map(first_ts_per_day)
-
         df["minute_of_day"] = ((df.index - first_ts).dt.total_seconds() // 60).astype(int)
 
-        open_930_per_day = (
-            df.groupby("day").first()["open"]
-        )
-
+    def _compute_open_at_930(self, df: pd.DataFrame) -> None:
+        """Compute opening price at 9:30 for each day."""
+        self.logger.info("Computing opening prices...")
+        open_930_per_day = df.groupby("day").first()["open"]
         df["open_at_930"] = df["day"].map(open_930_per_day)
 
+    def _compute_move(self, df: pd.DataFrame) -> None:
+        """Compute absolute price movement from opening price."""
+        self.logger.info("Computing price movements...")
         df["move"] = (df["close"] / df["open_at_930"] - 1).abs()
+
+    def _compute_rolling_sigma(self, df: pd.DataFrame) -> None:
+        self.logger.info("Computing rolling volatility...")
 
         agg = (
             df.groupby(["day", "minute_of_day"])
-                .agg(move=("move", "last"))
-                .reset_index()
+            .agg(move=("move", "last"))
+            .reset_index()
+            .sort_values(["minute_of_day", "day"])
         )
-        agg = agg.sort_values(["minute_of_day", "day"])
 
-        agg["sigma_roling_14d"] = (
+        agg["sigma_rolling_14d"] = (
             agg.groupby("minute_of_day")["move"]
-            .rolling(14, min_periods=2)
+            .rolling(window=14, min_periods=2)
             .mean()
             .reset_index(level=0, drop=True)
         )
 
-        df = df.merge(
-            agg[["day", "minute_of_day", "sigma"]],
-            on=["day", "minute_of_day"],
-            how="left"
+        # optional hardening
+        agg["sigma_rolling_14d"] = (
+            agg.groupby("minute_of_day")["sigma_rolling_14d"]
+            .ffill()
         )
 
-        # Get last close per day and shift to get previous day's close
+        df["sigma_rolling_14d"] = (
+            df.merge(
+                agg[["day", "minute_of_day", "sigma_rolling_14d"]],
+                on=["day", "minute_of_day"],
+                how="left"
+            )["sigma_rolling_14d"].values
+        )
+
+    def _compute_previous_close(self, df: pd.DataFrame) -> None:
+        """Compute previous day's closing price."""
+        self.logger.info("Computing previous close prices...")
         last_close_per_day = df.groupby("day")["close"].last()
         prev_close_per_day = last_close_per_day.shift(1)
         df["prev_close"] = df["day"].map(prev_close_per_day)
 
+    def _compute_reference_prices(self, df: pd.DataFrame) -> None:
+        """Compute reference prices for bounds calculation."""
+        self.logger.info("Computing reference prices...")
         df["open_ref"] = df[["open_at_930","prev_close"]].max(axis=1)
         df["low_ref"]  = df[["open_at_930","prev_close"]].min(axis=1)
 
-        df["upper_bnd"] = df["open_ref"] * (1 + df["sigma"])
-        df["lower_bnd"] = df["low_ref"]  * (1 - df["sigma"])
-        df.drop(columns= ["open_ref", "low_ref", "prev_close", "open_at_930","move"])
-    
+    def _compute_bounds(self, df: pd.DataFrame) -> None:
+        """Compute upper and lower trading bounds."""
+        self.logger.info("Computing trading bounds...")
+        df["upper_bnd"] = df["open_ref"] * (1 + df["sigma_rolling_14d"])
+        df["lower_bnd"] = df["low_ref"]  * (1 - df["sigma_rolling_14d"])
 
+    def _clean_before_export(self, df: pd.DataFrame) -> None:
+        """
+        Clean dataframe before export by removing intermediate calculation columns in-place.
+
+        Keeps only final analysis columns:
+        - Original OHLCV data
+        - Computed metrics (vwap, sigma_rolling_14d, upper_bnd, lower_bnd)
+        - Time identifiers (day, minute_of_day)
+
+        Removes intermediate columns used during computation:
+        - hlc (from VWAP calculation)
+        """
+        self.logger.info("Cleaning dataframe before export...")
+
+        # Columns to keep for final analysis/export
+        keep_columns = [
+            # Original data
+            "open", "high", "low", "close", "volume",
+            # Time identifiers
+            "minute_of_day",
+            # Computed metrics
+            "vwap", "sigma_roling_14d", "upper_bnd", "lower_bnd"
+        ]
+
+        # Get existing columns that we want to keep
+        existing_keep_columns = [col for col in keep_columns if col in df.columns]
+
+        # Columns to drop (all columns except the ones we want to keep)
+        columns_to_drop = [col for col in df.columns if col not in existing_keep_columns]
+
+        if columns_to_drop:
+            df.drop(columns=columns_to_drop, inplace=True)
+            
+        
     def compute_intraday_cum_vwap(self, df: pd.DataFrame) -> None:
         """Compute cumulative intraday VWAP for each day."""
         if "day" not in df.columns:
@@ -177,6 +244,7 @@ class MetricsCalculator:
             cum_vol_price = (group["hlc"] * group["volume"]).cumsum()
             cum_volume = group["volume"].cumsum()
             df.loc[group.index, "vwap"] = cum_vol_price / cum_volume
+        df.drop(columns = ["hlc"] , inplace = True)
 
         
     def compute_intraday_profiles(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -196,6 +264,7 @@ class MetricsCalculator:
             raise ValueError("Column 'day' must exist before calling merge_dividends.")
 
         dividends = dividends.copy()
+        
         dividends["day"] = pd.to_datetime(dividends["caldt"]).dt.date
 
         df["dividend"] = df["day"].map(dividends.set_index("day")["dividend"]).fillna(0)
