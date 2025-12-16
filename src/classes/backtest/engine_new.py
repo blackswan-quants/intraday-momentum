@@ -12,19 +12,19 @@ If we are outside noise area
 
 class Momentum(Strategy) :
 
-    def __init__(self):
+    def init(self):
         vol_target = 4
         max_leverage = 2
         pass
     
     def out_of_noise_area(self) -> Tuple[bool, bool]:
 
-        if self.data.upper_bnd < self.data.open :
+        if self.data.Upper_bnd < self.data.Open :
             out_of_bnd = True
             over = True
             return(out_of_bnd, over)
         
-        if self.data.lower_bnd > self.data.open :
+        if self.data.Lower_bnd > self.data.Open :
             out_of_bnd = True
             over = False
             return(out_of_bnd, over)
@@ -32,23 +32,21 @@ class Momentum(Strategy) :
         return (False, False)
     
     def set_leverage(self) -> float :
-
-
         pass
     
     def close_position(self) -> bool:
         pass
     
     def next(self):
-        Out_of_bnd , over = self.outside_of_noise_area(self.data)
+        Out_of_bnd , Over = self.out_of_noise_area()
 
-        if Out_of_bnd and self.data.index.date.minutes == 30:
-            if not over : 
-                self.position.short()
+        if Out_of_bnd and (self.data.Minute_of_day[-1] == 30):
+            if not Over : 
+                self.sell()
             else :
-                self.position.buy()
+                self.buy()
         
-        if self.poistion() and self.close_position(self.data):
+        if self.position and self.close_position():
             self.position.close()
         
         pass
