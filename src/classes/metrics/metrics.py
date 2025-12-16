@@ -220,7 +220,7 @@ class MetricsCalculator:
             # Time identifiers
             "minute_of_day",
             # Computed metrics
-            "vwap", "sigma_roling_14d", "upper_bnd", "lower_bnd"
+            "vwap", "sigma_rolling_14d", "upper_bnd", "lower_bnd"
         ]
 
         # Get existing columns that we want to keep
