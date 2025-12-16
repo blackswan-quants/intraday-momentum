@@ -231,7 +231,9 @@ class MetricsCalculator:
 
         if columns_to_drop:
             df.drop(columns=columns_to_drop, inplace=True)
-            
+        
+        # Rename all columns to have a starting upper case
+        df.rename(columns=lambda x: x.capitalize(), inplace=True)
         
     def compute_intraday_cum_vwap(self, df: pd.DataFrame) -> None:
         """Compute cumulative intraday VWAP for each day."""
