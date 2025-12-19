@@ -1,6 +1,5 @@
 from typing import Tuple
 from backtesting import Strategy 
-import pandas as pd
 
 """
 Recall main idea of the strat 
@@ -41,11 +40,6 @@ class Momentum_Band(Strategy) :
         MARKET_MINUTES = 390  # 9:30-16:00 in minutes from market open   
         EXIT_TIME=MARKET_MINUTES-5 #5 minutes buffer
 
-         #Healing the mistakes of the code: close position the day before didn't close at 16:00
-        if current_time == 1 and self.position: 
-            print(f"!!! Not closing at 16:00 !!!")
-            print(f"Data attuale: {self.data.index[-1]}")
-            self.position.close()
 
         # (Daily Reset)
         if current_time == 1:
@@ -104,11 +98,6 @@ class Momentum_Band_VWAP(Strategy) :
         MARKET_MINUTES = 390  # 9:30-16:00 in minutes from market open   
         EXIT_TIME=MARKET_MINUTES-5 #5 minutes buffer
 
-         #Healing the mistakes of the code: close position the day before didn't close at 16:00
-        if current_time == 1 and self.position: 
-            print(f"!!! Not closing at 16:00 !!!")
-            print(f"Data attuale: {self.data.index[-1]}")
-            self.position.close()
 
         # (Daily Reset)
         if current_time == 1:
@@ -151,7 +140,9 @@ class Momentum_Band_VWAP_Lev(Strategy) :
 
     def init(self):
         self.traded = False
-        self.sig_target = 0.04
+        self.sig_target = 0.02
+        self.max_leverage = 4
+        self.lev = 1
         pass
 
     def out_of_noise_area(self) -> Tuple[bool, bool]:
@@ -171,8 +162,9 @@ class Momentum_Band_VWAP_Lev(Strategy) :
         out_of_bnd, _ = self.out_of_noise_area()
         return not out_of_bnd
     
-    def set_leverage(self) -> float :
-        return None
+    def set_leverage(self, open) -> float :
+        
+        return min ( self.max_leverage , self.sig_target / self.data.Sigma[-1])
 
     
     def next(self):
@@ -182,11 +174,8 @@ class Momentum_Band_VWAP_Lev(Strategy) :
         MARKET_MINUTES = 390  # 9:30-16:00 in minutes from market open   
         EXIT_TIME=MARKET_MINUTES-5 #5 minutes buffer
 
-         #Healing the mistakes of the code: close position the day before didn't close at 16:00
-        if current_time == 1 and self.position: 
-            print(f"!!! Not closing at 16:00 !!!")
-            print(f"Data attuale: {self.data.index[-1]}")
-            self.position.close()
+        if current_time == 0 :  
+            self.lev = self.set_leverage(open= self.data.Open[-1])
 
         # (Daily Reset)
         if current_time == 1:
@@ -201,10 +190,16 @@ class Momentum_Band_VWAP_Lev(Strategy) :
         if not self.traded and (current_time % 30 == 0) and current_time<300:
             out_of_bnd, is_long = self.out_of_noise_area()
             if out_of_bnd:
+                equity = self.equity
+                price = self.data.Close[-1]
+
+                position_value = equity * self.lev
+                size = int(position_value / price)
+
                 if is_long:
-                    self.buy() 
+                    self.buy(size= size) 
                 else:
-                    self.sell()
+                    self.sell(size = size)
                 self.traded = True
                 
         # Open Postions (Exit & Stop Loss)

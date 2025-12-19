@@ -15,13 +15,6 @@ class MetricsCalculator:
     """
     Compute daily and intraday market microstructure metrics from high-frequency financial data.
 
-    This class calculates:
-        - Log returns
-        - Realized Volatility (RV)
-        - Bipower Variation (BV)
-        - Daily VWAP (volume-weighted average price)
-        - Intraday aggregated profiles
-
     Example input columns:
         'Datetime' : datetime64
         'close'    : float
@@ -83,6 +76,8 @@ class MetricsCalculator:
             self.compute_bounds(df)
             self.compute_intraday_cum_vwap(df)
             self.merge_dividends(df,dividends)
+            self._compute_volatility(df)
+
             self._clean_before_export(df)
             df_daily = self.compute_intraday_profiles(df)
 
@@ -180,6 +175,34 @@ class MetricsCalculator:
             )["sigma_rolling_14d"].values
         )
 
+    def _compute_volatility(self, df: pd.DataFrame) -> None:
+        """Compute rolling volatility."""
+        self.logger.info("Computing rolling volatility...")
+
+        # --- daily log returns ---
+        daily_close = df.groupby("day")["close"].last()
+        daily_ret = np.log(daily_close / daily_close.shift(1))
+
+        # --- rolling mean ---
+        mu = (
+            daily_ret
+            .rolling(window=14, min_periods=14)
+            .mean()
+        )
+        # sigma
+        sigma= (
+            ((daily_ret - mu) ** 2)
+            .rolling(window=14, min_periods=14)
+            .apply(
+                lambda x: x.sum() / 13,
+                raw=False
+            )
+            .pow(0.5) 
+        )
+
+        # Map back to df
+        df["sigma"] = df["day"].map(sigma)
+
     def _compute_previous_close(self, df: pd.DataFrame) -> None:
         """Compute previous day's closing price."""
         self.logger.info("Computing previous close prices...")
@@ -220,7 +243,7 @@ class MetricsCalculator:
             # Time identifiers
             "minute_of_day",
             # Computed metrics
-            "vwap", "sigma_rolling_14d", "upper_bnd", "lower_bnd"
+            "vwap", "upper_bnd", "lower_bnd" , "sigma"
         ]
 
         # Get existing columns that we want to keep
