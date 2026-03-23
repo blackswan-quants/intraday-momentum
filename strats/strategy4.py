@@ -5,11 +5,11 @@ import numpy as np
 # endregion
 
 
-class AccurateIntradayMomentum(QCAlgorithm):
+class IntradayMomentum_4(QCAlgorithm):
 
     def Initialize(self):
         # 1. Setup Basics
-        self.SetStartDate(2017, 5, 10)
+        self.SetStartDate(2025, 2, 10)
         self.SetEndDate(2025, 5, 10)
         self.SetCash(100000)
 
@@ -23,17 +23,17 @@ class AccurateIntradayMomentum(QCAlgorithm):
         self.minute_stats = {}                  # { "HH:MM" : deque of abs moves }
         self.daily_returns = deque(maxlen=self.lookback)
 
-        # Frequenze di controllo
-        self.entry_check_interval = 30          # ingresso ogni 30 minuti
-        self.exit_check_interval = 5            # uscita ogni 5 minuti
+        self.entry_check_interval = 30          # entry every 30 minutes
+        self.exit_check_interval = 5            # exit every 5 minutes
 
-        # Conferma uscita
-        self.exit_confirmation_bars = 4          #Numero di controlli da soddisfare per avere un'exit
+        # Exit confirmation counters
+        self.exit_confirmation_bars = 4
         self.long_exit_counter = 0
         self.short_exit_counter = 0
 
         # 4. Indicators & State
         self.vwap = self.VWAP(self.spy_symbol)
+        self.ema = self.EMA(self.spy_symbol, 100, Resolution.Minute)
         self.todays_open = None
         self.yesterdays_close = None
 
@@ -61,7 +61,7 @@ class AccurateIntradayMomentum(QCAlgorithm):
         self.yesterdays_close = current_close
         self.todays_open = None
 
-        # reset counters at end of session
+        # Reset counters at end of session
         self.long_exit_counter = 0
         self.short_exit_counter = 0
 
@@ -83,6 +83,7 @@ class AccurateIntradayMomentum(QCAlgorithm):
             self.todays_open is None
             or self.yesterdays_close is None
             or len(self.daily_returns) < self.lookback
+            or not self.ema.IsReady
         ):
             return
 
@@ -90,7 +91,6 @@ class AccurateIntradayMomentum(QCAlgorithm):
         historical_moves = self.minute_stats.get(time_key, deque(maxlen=self.lookback))
         sigma = np.mean(historical_moves) if len(historical_moves) > 0 else 0
 
-        # If no minute-specific history yet, just store today's move and skip trading
         if sigma == 0 and not self.IsWarmingUp:
             current_move = abs(current_price / self.todays_open - 1)
             historical_moves.append(current_move)
@@ -109,20 +109,19 @@ class AccurateIntradayMomentum(QCAlgorithm):
         if current_time.hour == 15 and current_time.minute >= 58:
             if self.Portfolio.Invested:
                 self.Liquidate(self.spy_symbol)
-
             self.long_exit_counter = 0
             self.short_exit_counter = 0
             return
 
-        # 6. Read VWAP
+        # 6. Read VWAP and EMA
         vwap_val = self.vwap.Current.Value
+        ema_val = self.ema.Current.Value
 
-        # 7. EXIT LOGIC: checked every exit_check_interval minutes
+        # 7. EXIT LOGIC: checked every 5 minutes with confirmation counter
         if self.Portfolio.Invested and current_time.minute % self.exit_check_interval == 0:
 
             if self.Portfolio[self.spy_symbol].IsLong:
                 exit_level = max(upper_bound, vwap_val)
-
                 if current_price < exit_level:
                     self.long_exit_counter += 1
                 else:
@@ -136,7 +135,6 @@ class AccurateIntradayMomentum(QCAlgorithm):
 
             elif self.Portfolio[self.spy_symbol].IsShort:
                 exit_level = min(lower_bound, vwap_val)
-
                 if current_price > exit_level:
                     self.short_exit_counter += 1
                 else:
@@ -148,18 +146,18 @@ class AccurateIntradayMomentum(QCAlgorithm):
                     self.short_exit_counter = 0
                     return
 
-        # 8. ENTRY LOGIC: checked every entry_check_interval minutes
+        # 8. ENTRY LOGIC: dual confirmation — band breakout AND EMA alignment
         if (not self.Portfolio.Invested) and current_time.minute % self.entry_check_interval == 0:
             target_leverage = self.CalculateDynamicSize()
             if target_leverage == 0:
                 return
 
-            if current_price > upper_bound:
+            if current_price > upper_bound and current_price > ema_val:
                 self.SetHoldings(self.spy_symbol, target_leverage)
                 self.long_exit_counter = 0
                 self.short_exit_counter = 0
 
-            elif current_price < lower_bound:
+            elif current_price < lower_bound and current_price < ema_val:
                 self.SetHoldings(self.spy_symbol, -target_leverage)
                 self.long_exit_counter = 0
                 self.short_exit_counter = 0
