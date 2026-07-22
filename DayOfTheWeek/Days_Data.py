@@ -1,4 +1,9 @@
+from pathlib import Path
+
 import pandas as pd
+
+# Trade lists live next to this script, so the module runs from any directory
+DATA_DIR = Path(__file__).parent
 
 # List of strategy numbers to process
 strategies = [0, 1, 2, 3, 4]
@@ -8,10 +13,10 @@ days_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
 
 for strat_id in strategies:
     # 1. Dynamic file loading
-    file_name = f'Trades_Strat{strat_id}_8y.csv'
-    
+    file_path = DATA_DIR / f'Trades_Strat{strat_id}_8y.csv'
+
     try:
-        df = pd.read_csv(file_name)
+        df = pd.read_csv(file_path)
         
         # --- DAY OF THE WEEK EXTRACTION ---
         df['Entry Time'] = pd.to_datetime(df['Entry Time'])
@@ -38,4 +43,4 @@ for strat_id in strategies:
         print(stats.to_string(index=False))
         
     except FileNotFoundError:
-        print(f"\n⚠️ Warning: File {file_name} not found. Skipping Strategy {strat_id}.")
+        print(f"\n⚠️ Warning: File {file_path.name} not found. Skipping Strategy {strat_id}.")
